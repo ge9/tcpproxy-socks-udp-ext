@@ -19,7 +19,7 @@ fn print_usage(program: &str, opts: Options) {
     let program_path = std::path::PathBuf::from(program);
     let program_name = program_path.file_stem().unwrap().to_string_lossy();
     let brief = format!(
-        "Usage: {} REMOTE_HOST:PORT [-b BIND_ADDR] [-l LOCAL_PORT] [-h SSH_HOST] [-c COMMAND] ...",
+        "Usage: {} REMOTE_HOST:PORT [-b BIND_ADDR] [-l LOCAL_PORT] [-c COMMAND] ...",
         program_name
     );
     print!("{}", opts.usage(&brief));
@@ -42,12 +42,6 @@ async fn main() -> Result<(), BoxedError> {
         "local-port",
         "The local port to which tcpproxy should bind to, randomly chosen otherwise",
         "LOCAL_PORT",
-    );
-    opts.reqopt(
-        "h",
-        "host",
-        "The ssh host to connect to, configured in .ssh/config",
-        "SSH_HOST",
     );
     opts.optmulti(
         "c",
@@ -85,9 +79,8 @@ async fn main() -> Result<(), BoxedError> {
         Some(addr) => addr,
         None => "127.0.0.1".to_owned(),
     };
-    let ssh_host = matches.opt_str("h").unwrap();
     let ssh_command = matches.opt_strs("c");
-    forward(&bind_addr, local_port, remote, ssh_host, ssh_command).await
+    forward(&bind_addr, local_port, remote, ssh_command).await
 }
 
 async fn read_from_stdout(
@@ -110,9 +103,10 @@ async fn read_from_stdout(
     }
 }
 
-async fn forward(bind_ip: &str, local_port: i32, remote: String, ssh_host: String, ssh_command: Vec<String>) -> Result<(), BoxedError> {
-    let mut child = Command::new("ssh")
-        .arg(ssh_host).args(ssh_command.as_slice())
+async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<String>) -> Result<(), BoxedError> {
+    let command_slice = command.as_slice();
+    let mut child = Command::new(&command_slice[0])
+        .args(&command_slice[1..])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
