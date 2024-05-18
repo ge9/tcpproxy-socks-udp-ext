@@ -203,7 +203,7 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
                     eprintln!("[client-info] Assigned {} for {:?}", udp_port, sv_tuple);
                     conmap.lock().await.insert(sv_tuple, Arc::clone(&mutsocket));
                     tokio::spawn(async move {
-                        let mut buf = [0; 1555];
+                        let mut buf = [0; 1502];
                         {
                             let (size, src) = mutsocket.recv_from(&mut buf).await.expect("error in receiving first packet");
                             mutsocket.connect(src).await.unwrap();
@@ -240,7 +240,7 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
             copied += bytes_read;
         }
 
-        if r2c {//or !r2c (either will be ok)
+        if r2c && !(sv_tuple.4 == 0 && sv_tuple.5 == 0) {// only after UDP associate. either r2c or !r2c will be ok
             let mut stdin = stdin_writer.lock().await;
             stdin.write_all(&[sv_tuple.0, sv_tuple.1, sv_tuple.2, sv_tuple.3, 0, 0, sv_tuple.4, sv_tuple.5, 1]).await.unwrap();
             stdin.flush().await.unwrap();
