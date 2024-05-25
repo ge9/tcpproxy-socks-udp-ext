@@ -157,6 +157,7 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
         state: Arc<std::sync::Mutex<bool>>,
         stdin_writer: Arc<tokio::sync::Mutex<tokio::process::ChildStdin>>,
         conmap: Arc<tokio::sync::Mutex<HashMap<(u8, u8, u8, u8, u8, u8), Arc<UdpSocket>>>>, //UdpSocket doesn't require Mutex
+        local_addr: std::net::IpAddr
     ) -> tokio::io::Result<usize>
     where
         R: tokio::io::AsyncRead + Unpin,
@@ -165,11 +166,13 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
         let mut copied = 0;
         let mut buf = [0u8; BUF_SIZE];
         let mut sv_tuple = (0,0,0,0,0,0);
+        let udp_closed = Arc::new(std::sync::Mutex::new(false));
         loop {
+            let udp_closed1 = Arc::clone(&udp_closed);
             let bytes_read;
+            //TODO: We should use read_exact to parse byte stream correctly in any situations.
             tokio::select! {
                 biased;
-
                 result = read.read(&mut buf) => {
                     use std::io::ErrorKind::{ConnectionReset, ConnectionAborted};
                     bytes_read = result.or_else(|e| match e.kind() {
@@ -188,16 +191,18 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
             }
 
             if *state.lock().unwrap() {
+                //TODO: support IPv6
                 sv_tuple = (buf[4], buf[5], buf[6], buf[7], buf[8], buf[9]);
                 let stdin_writer1 = Arc::clone(&stdin_writer);
                 tokio::spawn(async move {
                     let mut stdin = stdin_writer1.lock().await;
+                    //request connection to the remote UDP port
                     stdin.write_all(&[buf[4], buf[5], buf[6], buf[7], 0, 0, buf[8], buf[9], 0]).await.unwrap();
                     stdin.flush().await.unwrap();
                 });
                 let stdin_writer2 = Arc::clone(&stdin_writer);
                 let new_socket = tokio::task::block_in_place(|| async {
-                    let udp_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+                    let udp_socket = UdpSocket::bind((local_addr,0)).await.unwrap();
                     let udp_port = udp_socket.local_addr().unwrap().port();
                     let mutsocket = Arc::new(udp_socket);
                     eprintln!("[client-info] Assigned {} for {:?}", udp_port, sv_tuple);
@@ -215,7 +220,7 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
                             stdin.write_all(&buf[..size]).await.unwrap();
                             stdin.flush().await.unwrap();
                         }
-                        loop {
+                        while !*udp_closed1.lock().unwrap() {
                             let (size, _) = mutsocket.recv_from(&mut buf).await.expect("error in receiving packet");
                             let s = u16::to_be_bytes(size as u16);
                             let stdin_writer = Arc::clone(&stdin_writer2);
@@ -241,6 +246,7 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
         }
 
         if r2c && !(sv_tuple.4 == 0 && sv_tuple.5 == 0) {// only after UDP associate. either r2c or !r2c will be ok
+            *udp_closed.lock().unwrap()=true;
             let mut stdin = stdin_writer.lock().await;
             stdin.write_all(&[sv_tuple.0, sv_tuple.1, sv_tuple.2, sv_tuple.3, 0, 0, sv_tuple.4, sv_tuple.5, 1]).await.unwrap();
             stdin.flush().await.unwrap();
@@ -252,7 +258,7 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
         let (mut client, client_addr) = listener.accept().await?;
         let stdin_writer0 = Arc::clone(&stdin_writer);
         let conmap1 = Arc::clone(&conmap0);
-
+        let local_addr = client.local_addr().unwrap().ip();
         tokio::spawn(async move {
             println!("New connection from {}", client_addr);
 
@@ -270,9 +276,9 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
             let r2c = Arc::new(std::sync::Mutex::new(false));
             let (cancel, _) = broadcast::channel::<()>(1);
             let (remote_copied, client_copied) = tokio::join! {
-                copy_with_abort(&mut remote_read, &mut client_write, cancel.subscribe(),true, Arc::clone(&r2c), Arc::clone(&stdin_writer0), Arc::clone(&conmap1))
+                copy_with_abort(&mut remote_read, &mut client_write, cancel.subscribe(),true, Arc::clone(&r2c), Arc::clone(&stdin_writer0), Arc::clone(&conmap1), local_addr)
                     .then(|r| { let _ = cancel.send(()); async { r } }),
-                copy_with_abort(&mut client_read, &mut remote_write, cancel.subscribe(),false, r2c            , Arc::clone(&stdin_writer0), Arc::clone(&conmap1))
+                copy_with_abort(&mut client_read, &mut remote_write, cancel.subscribe(),false, r2c            , Arc::clone(&stdin_writer0), Arc::clone(&conmap1), local_addr)
                     .then(|r| { let _ = cancel.send(()); async { r } }),
             };
 
