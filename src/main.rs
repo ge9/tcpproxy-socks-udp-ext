@@ -247,6 +247,7 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
 
         if r2c && !(sv_tuple.4 == 0 && sv_tuple.5 == 0) {// only after UDP associate. either r2c or !r2c will be ok
             *udp_closed.lock().unwrap()=true;
+            conmap.lock().await.remove(&sv_tuple);
             let mut stdin = stdin_writer.lock().await;
             stdin.write_all(&[sv_tuple.0, sv_tuple.1, sv_tuple.2, sv_tuple.3, 0, 0, sv_tuple.4, sv_tuple.5, 1]).await.unwrap();
             stdin.flush().await.unwrap();
