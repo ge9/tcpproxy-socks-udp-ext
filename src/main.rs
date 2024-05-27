@@ -252,7 +252,7 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
         if r2c && !(sv_tuple.4 == 0 && sv_tuple.5 == 0) {// only after UDP associate. either r2c or !r2c will be ok
             *udp_closed.lock().unwrap()=true;
             if let Some(s) = conmap.lock().await.remove(&sv_tuple){
-                eprintln!("[client-info] Assigned {} for {:?}",s.local_addr().unwrap(), sv_tuple);
+                eprintln!("[client-info] Removed {} for {:?}",s.local_addr().unwrap(), sv_tuple);
             }else{
                 eprintln!("[client-warn] Tried to remove a socket for an unknown remote UDP port {:?}", sv_tuple);
             }
