@@ -99,6 +99,8 @@ async fn read_from_stdout(
             buffer[0], buffer[1], buffer[2], buffer[3], buffer[4], buffer[5],
         )) {
             u.send(&data).await.unwrap();
+        }else{
+            eprintln!("[client-warn] data from an unknown remote UDP port {:?}",&buffer[..6]);
         }
     }
 }
@@ -204,8 +206,8 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
                 let new_socket = tokio::task::block_in_place(|| async {
                     let udp_socket = UdpSocket::bind((local_addr,0)).await.unwrap();
                     let udp_port = udp_socket.local_addr().unwrap().port();
+                    eprintln!("[client-info] Assigned {} for {:?}", udp_socket.local_addr().unwrap(), sv_tuple);
                     let mutsocket = Arc::new(udp_socket);
-                    eprintln!("[client-info] Assigned {} for {:?}", udp_port, sv_tuple);
                     conmap.lock().await.insert(sv_tuple, Arc::clone(&mutsocket));
                     tokio::spawn(async move {
                         let mut buf = [0; 1502];
@@ -233,7 +235,9 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
                     return udp_port;
                 }).await;
                 let a = new_socket.to_be_bytes();
-                buf[4] = 127;buf[5] = 0;buf[6] = 0;buf[7] = 1;buf[8] = a[0];buf[9] = a[1]
+                //TODO: return error reply
+                let l = if let std::net::IpAddr::V4(ad) = local_addr {ad.octets()}else{[0,0,0,0]};
+                buf[4] =l[0];buf[5] = l[1];buf[6] = l[2];buf[7] = l[3];buf[8] = a[0];buf[9] = a[1]
             }
             {
                 let mut s = state.lock().unwrap();
@@ -247,7 +251,11 @@ async fn forward(bind_ip: &str, local_port: i32, remote: String, command: Vec<St
 
         if r2c && !(sv_tuple.4 == 0 && sv_tuple.5 == 0) {// only after UDP associate. either r2c or !r2c will be ok
             *udp_closed.lock().unwrap()=true;
-            conmap.lock().await.remove(&sv_tuple);
+            if let Some(s) = conmap.lock().await.remove(&sv_tuple){
+                eprintln!("[client-info] Assigned {} for {:?}",s.local_addr().unwrap(), sv_tuple);
+            }else{
+                eprintln!("[client-warn] Tried to remove a socket for an unknown remote UDP port {:?}", sv_tuple);
+            }
             let mut stdin = stdin_writer.lock().await;
             stdin.write_all(&[sv_tuple.0, sv_tuple.1, sv_tuple.2, sv_tuple.3, 0, 0, sv_tuple.4, sv_tuple.5, 1]).await.unwrap();
             stdin.flush().await.unwrap();
